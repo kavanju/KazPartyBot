@@ -1,76 +1,76 @@
-import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.utils import executor
 import os
+import logging
 import json
+from dotenv import load_dotenv
+import openai
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils import executor
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-API_TOKEN = os.getenv("TOKEN")  # Телеграм токен
+load_dotenv()
 
-# Логирование
+TOKEN = os.getenv("TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    logging.error("OpenAI API key is missing!")
+
+openai.api_key = OPENAI_API_KEY
+
 logging.basicConfig(level=logging.INFO)
-
-# Инициализация бота и диспетчера
-bot = Bot(token=API_TOKEN)
+bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
-# Файл для сохранения заведений
 DATA_FILE = "data/saved_places.json"
 os.makedirs("data", exist_ok=True)
 
-# Загружаем заведения
-def load_saved_places():
+def load_saved():
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return json.load(open(DATA_FILE, "r", encoding="utf-8"))
     return {}
 
-# Сохраняем заведения
-def save_place(user_id, place):
-    data = load_saved_places()
+def save_place(user_id: int, place: dict):
+    data = load_saved()
     data.setdefault(str(user_id), []).append(place)
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# Обработка команды /start
 @dp.message_handler(commands=["start"])
-async def start_cmd(message: Message):
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(KeyboardButton("📍 Куда сходить?"))
-    keyboard.add(KeyboardButton("📚 Мои сохранённые места"))
-    await message.answer("Привет! Я ИИ-помощник по заведениям. Опиши, куда хочешь сходить, или выбери опцию.", reply_markup=keyboard)
+async def start_cmd(message: types.Message):
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add(KeyboardButton("📍 Куда сходить?"))
+    kb.add(KeyboardButton("📚 Мои сохранённые места"))
+    await message.answer("Привет! Я AI-помощник. Опиши, куда хочешь сходить.", reply_markup=kb)
 
-# Обработка кнопки "Мои сохранённые места"
 @dp.message_handler(lambda m: m.text == "📚 Мои сохранённые места")
-async def show_saved(message: Message):
-    data = load_saved_places()
-    places = data.get(str(message.from_user.id), [])
-    if not places:
-        await message.answer("У тебя пока нет сохранённых мест.")
+async def show_saved(message: types.Message):
+    data = load_saved().get(str(message.from_user.id)) or []
+    if not data:
+        await message.answer("У тебя нет сохранённых мест.")
     else:
-        reply = "📌 Твои места:\n\n"
-        for i, place in enumerate(places, 1):
-            reply += f"{i}. {place.get('name', 'Без названия')}\n"
-        await message.answer(reply)
+        reply = "\n".join(f"{i+1}. {p.get('name')}" for i,p in enumerate(data))
+        await message.answer(f"📌 Сохранённые места:\n\n{reply}")
 
-# Обработка текстового запроса пользователя
+async def ask_openai(question: str) -> str:
+    try:
+        resp = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role":"user","content":question}],
+            temperature=0.6,
+            max_tokens=500
+        )
+        return resp.choices[0].message["content"].strip()
+    except Exception as e:
+        logging.exception("OpenAI error")
+        return f"Ошибка AI: {e}"
+
 @dp.message_handler()
-async def handle_request(message: Message):
-    user_input = message.text.strip()
-    # Здесь — заглушка ИИ, можно подключить OpenAI
-    example_place = {
-        "name": f"Пример заведения для: {user_input}",
-        "description": "Уютное место с музыкой и танцами",
-        "price": "Средний чек: 5000₸",
-    }
-    save_place(message.from_user.id, example_place)
-
-    await message.answer(
-        f"🎉 Нашёл место для тебя:\n\n"
-        f"🏠 Название: {example_place['name']}\n"
-        f"📖 Описание: {example_place['description']}\n"
-        f"💰 {example_place['price']}"
-    )
+async def handle_text(message: types.Message):
+    await message.answer("⌛ Думаю...")
+    ai_reply = await ask_openai(message.text)
+    # Пример сохранения:
+    place = {"name": f"Рекомендация: тема — {message.text}", "description": ai_reply}
+    save_place(message.from_user.id, place)
+    await message.answer(f"{ai_reply}\n\n✅ Сохранил это место!")
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
