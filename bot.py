@@ -159,19 +159,28 @@ def home():
 
 # Запуск
 def main():
-    global bot_app
-    bot_app = ApplicationBuilder().token(TOKEN).concurrent_updates(True).build()
+    # Запускаем Flask в отдельном потоке
+    Thread(target=run_flask).start()
 
-    bot_app.add_handler(CommandHandler("start", start))
-    bot_app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    bot_app.add_handler(MessageHandler(filters.VOICE, voice_handler))
-    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # Telegram bot
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    app.add_handler(MessageHandler(filters.VOICE, voice_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Webhook
-    bot_app.run_webhook(
+    WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+
+    async def set_webhook():
+        await app.bot.set_webhook(WEBHOOK_URL)
+
+    app.run_webhook(
         listen="0.0.0.0",
         port=8080,
-        webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
+        webhook_path="/webhook",
+        on_startup=[set_webhook],
     )
 
 # Запуск Flask в потоке
@@ -198,4 +207,5 @@ if __name__ == "__main__":
         )
 
     asyncio.run(main())
+
 
