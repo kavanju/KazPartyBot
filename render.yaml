@@ -1,7 +1,7 @@
 services:
   - type: web
     name: kazpartybot
-    env: docker
-    dockerfilePath: Dockerfile
-    plan: free
-pythonVersion: 3.10.13
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    pythonVersion: 3.10.13
