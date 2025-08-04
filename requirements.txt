@@ -7,3 +7,4 @@ Flask
 SpeechRecognition
 pydub
 python-dotenv
+pytesseract
