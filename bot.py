@@ -57,4 +57,27 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not update.message.photo:
         return
-    await update.message.reply_text("🕵️ Провер
+    await update.message.reply_text("🕵️ Проверяю чек...")
+    user_access[user_id] = True
+    await update.message.reply_text("✅ Доступ активирован. Пишите, что ищем!")
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not user_access.get(user_id) and user_id != OWNER_ID:
+        await update.message.reply_text("❌ Нет доступа. Нажмите /start")
+        return
+    await update.message.reply_text(f"🤖 Поиск по запросу:\n«{update.message.text}»...")
+
+# Запуск бота
+def main():
+    Thread(target=run_flask).start()
+
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
