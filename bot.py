@@ -82,7 +82,7 @@ await process_search(query, update, context)
 
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE): query = update.callback_query user_id = query.from_user.id await query.answer() if query.data == "saved": places = saved_places.get(user_id, []) if not places: await query.edit_message_text("📭 У вас нет сохранённых мест.") return msg = "📚 Ваши сохранённые места:\n\n" + "\n\n".join(places) await query.edit_message_text(msg[:4000])
 
-Поиск заведений через DuckDuckGo/TripAdvisor/2GIS
+# Поиск заведений через DuckDuckGo/TripAdvisor/2GIS
 
 async def process_search(query: str, update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.effective_user.id await update.message.reply_text(f"🤖 Ищу по запросу: «{query}»...")
 
@@ -121,4 +121,5 @@ app.add_handler(MessageHandler(filters.VOICE, voice_handler))
 app.run_polling()
 
 if name == "main": main()
+
 
