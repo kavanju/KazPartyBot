@@ -176,5 +176,25 @@ def main():
 
 # Запуск Flask в потоке
 if __name__ == "__main__":
-    Thread(target=flask_app.run, kwargs={"host": "0.0.0.0", "port": 8080}).start()
-    main()
+    Thread(target=run_flask).start()
+
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    app.add_handler(MessageHandler(filters.VOICE, voice_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # Заменяем polling на webhook
+    import asyncio
+    async def main():
+        await app.initialize()
+        await app.start()
+        await app.bot.set_webhook("https://<your-render-url>.onrender.com/telegram")
+        await app.updater.start_webhook(
+            listen="0.0.0.0",
+            port=8080,
+            webhook_url="https://<your-render-url>.onrender.com/telegram"
+        )
+
+    asyncio.run(main())
