@@ -194,7 +194,8 @@ if __name__ == "__main__":
         await app.updater.start_webhook(
             listen="0.0.0.0",
             port=8080,
-            webhook_url="https://<your-render-url>.onrender.com/telegram"
+            webhook_url="https://kazpartybot.onrender.com/telegram"
         )
 
     asyncio.run(main())
+
