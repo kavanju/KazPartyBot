@@ -127,19 +127,28 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_t
 application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
 application.add_handler(MessageHandler(filters.VOICE, voice_handler))
 
+import asyncio
+
+async def run_bot():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    app.add_handler(MessageHandler(filters.VOICE, voice_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await app.updater.wait()
+
 def main():
+    # Запуск Flask в отдельном потоке
     Thread(target=run_flask).start()
 
-    async def set_webhook():
-        await application.bot.set_webhook(WEBHOOK_URL)
-        print("✅ Webhook установлен!")
-
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=8080,
-        webhook_path="/webhook",
-        on_startup=[set_webhook],
-    )
+    # Запуск Telegram-бота асинхронно
+    asyncio.run(run_bot())
 
 if __name__ == "__main__":
     main()
+
