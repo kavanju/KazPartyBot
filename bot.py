@@ -1,10 +1,10 @@
 import os
 import logging
-from telegram import Update
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import (
-    Application, ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+    ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 )
-from flask import Flask, request
+from flask import Flask
 from threading import Thread
 from dotenv import load_dotenv
 from duckduckgo_search import DDGS
@@ -19,31 +19,25 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "123456789"))
 KASPI_NAME = os.getenv("KASPI_NAME", "Имя Kaspi")
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")  # Добавь это в .env
+
+# Память доступа
+user_access = {}
+free_trial_used = set()
+saved_places = {}
 
 # Логи
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Доступ
-user_access = {}
-free_trial_used = set()
-saved_places = {}
-
-# Flask app
+# Flask для Render
 flask_app = Flask(__name__)
-telegram_app = None  # будет позже присвоено
+@flask_app.route("/")
+def home():
+    return "KazPartyBot is alive!"
 
-
-@flask_app.route('/')
-def index():
-    return 'KazPartyBot is running!'
-
-
-@flask_app.route(f'/{TOKEN}', methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    telegram_app.update_queue.put(update)
-    return "OK", 200
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=8080)
 
 # Команды
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -69,22 +63,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "После оплаты пришлите чек сюда."
         )
 
-# Распознавание чека
+# Обработка чеков по фото (Kaspi)
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     photo = update.message.photo[-1]
-    file = await photo.get_file()
-    img_bytes = await file.download_as_bytearray()
-    img = Image.open(BytesIO(img_bytes))
-    text = pytesseract.image_to_string(img, lang='rus')
+    photo_file = await photo.get_file()
+    image_bytes = await photo_file.download_as_bytearray()
+    image = Image.open(BytesIO(image_bytes))
+    text = pytesseract.image_to_string(image, lang="rus")
 
     if KASPI_NAME.lower() in text.lower():
         user_access[user_id] = True
         await update.message.reply_text("✅ Чек подтверждён. Доступ активирован!")
     else:
-        await update.message.reply_text("❌ Не удалось распознать имя. Попробуйте снова.")
+        await update.message.reply_text("❌ Не удалось распознать имя на чеке. Попробуйте снова.")
 
-# Голос
+# Голосовой ввод
 async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not user_access.get(user_id) and user_id != OWNER_ID:
@@ -100,15 +94,15 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     recognizer = sr.Recognizer()
 
     with sr.AudioFile(wav_io) as source:
-        data = recognizer.record(source)
+        audio_data = recognizer.record(source)
         try:
-            text = recognizer.recognize_google(data, language="ru-RU")
+            text = recognizer.recognize_google(audio_data, language="ru-RU")
             await update.message.reply_text(f"🗣️ Вы сказали: {text}")
             await search_places(update, text)
         except sr.UnknownValueError:
             await update.message.reply_text("❌ Не удалось распознать голос.")
 
-# Сохранённые
+# Кнопка сохранённых мест
 async def my_places(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     places = saved_places.get(user_id, [])
@@ -116,29 +110,29 @@ async def my_places(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📂 У вас пока нет сохранённых мест.")
         return
 
-    text = "\n\n".join(places)
-    await update.message.reply_text(f"📚 Ваши сохранённые места:\n\n{text}")
+    msg = "\n\n".join(places)
+    await update.message.reply_text(f"📚 Ваши сохранённые места:\n\n{msg}")
 
-# Поиск
+# Поиск заведений через DuckDuckGo
 async def search_places(update: Update, query: str):
     user_id = update.effective_user.id
     await update.message.reply_text("🔍 Ищу подходящие места...")
 
     results = DDGS().text(query + " site:2gis.kz", max_results=5)
-    msg = ""
-    for i, r in enumerate(results, 1):
+    response = ""
+    for i, r in enumerate(results, start=1):
         title = r.get("title")
         href = r.get("href")
         if title and href:
-            msg += f"{i}. [{title}]({href})\n"
+            response += f"{i}. [{title}]({href})\n"
             saved_places[user_id].append(f"{title} — {href}")
 
-    if msg:
-        await update.message.reply_text(msg, parse_mode="Markdown")
+    if response:
+        await update.message.reply_text(response, parse_mode="Markdown")
     else:
         await update.message.reply_text("😕 Ничего не найдено.")
 
-# Текст
+# Обработка текстов
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
@@ -154,17 +148,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await search_places(update, text)
 
 # Запуск
-async def main():
-    global telegram_app
-    telegram_app = ApplicationBuilder().token(TOKEN).build()
+def main():
+    Thread(target=run_flask).start()
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    telegram_app.add_handler(MessageHandler(filters.VOICE, voice_handler))
-    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    app.add_handler(MessageHandler(filters.VOICE, voice_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    await telegram_app.bot.set_webhook(url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{TOKEN}")
-    telegram_app.run_webhook(
+    # Webhook-режим
+    webhook_url = f"{RENDER_EXTERNAL_URL}/{TOKEN}"
+    app.run_webhook(
         listen="0.0.0.0",
         port=8080,
-        webhook_path=_
+        webhook_url=webhook_url,
+    )
+
+if __name__ == "__main__":
+    main()
