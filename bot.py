@@ -1,27 +1,29 @@
 import os
 import logging
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ContextTypes, filters
+)
 from flask import Flask
 from threading import Thread
 from dotenv import load_dotenv
 
-# Загрузка .env
+# Загрузка переменных из .env
 load_dotenv()
 
-# Конфигурация
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "123456789"))
 KASPI_NAME = os.getenv("KASPI_NAME", "Имя Kaspi")
 
+# Словари доступа
 user_access = {}
 free_trial_used = set()
 
-# Логи
+# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Flask-сервер
+# Flask-сервер для Render
 flask_app = Flask(__name__)
 
 @flask_app.route("/")
@@ -31,7 +33,7 @@ def home():
 def run_flask():
     flask_app.run(host="0.0.0.0", port=8080)
 
-# Команды
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id == OWNER_ID:
@@ -53,26 +55,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "После оплаты пришлите чек сюда."
         )
 
+# Обработка фото чека
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not update.message.photo:
         return
+
     await update.message.reply_text("🕵️ Проверяю чек...")
+
+    # Пока просто активируем доступ вручную
     user_access[user_id] = True
     await update.message.reply_text("✅ Доступ активирован. Пишите, что ищем!")
 
+# Обработка текста
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not user_access.get(user_id) and user_id != OWNER_ID:
         await update.message.reply_text("❌ Нет доступа. Нажмите /start")
         return
+
     await update.message.reply_text(f"🤖 Поиск по запросу:\n«{update.message.text}»...")
 
-# Запуск
+# Запуск Flask и Telegram бота
 def main():
+    # Flask в отдельном потоке
     Thread(target=run_flask).start()
 
-    app = ApplicationBuilder().token(TOKEN).build()
+    # Telegram приложение
+    app = Application.builder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
