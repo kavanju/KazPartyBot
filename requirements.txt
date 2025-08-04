@@ -1,0 +1,8 @@
+python-telegram-bot==20.7
+aiohttp
+requests
+Pillow
+duckduckgo-search
+Flask
+SpeechRecognition
+pydub
