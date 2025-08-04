@@ -4,3 +4,4 @@ services:
     env: docker
     dockerfilePath: Dockerfile
     plan: free
+pythonVersion: 3.10.13
