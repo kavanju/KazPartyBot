@@ -81,14 +81,23 @@ def main():
     # Flask в отдельном потоке
     Thread(target=run_flask).start()
 
-    # Telegram приложение
-    app = Application.builder().token(TOKEN).build()
+    import asyncio
+    async def run_bot():
+        application = Application.builder().token(TOKEN).post_init(lambda app: None).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    app.run_polling()
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        await application.updater.wait_until_shutdown()
+        await application.stop()
+        await application.shutdown()
+
+    asyncio.run(run_bot())
 
 if __name__ == "__main__":
     main()
+
