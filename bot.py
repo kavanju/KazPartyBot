@@ -2,9 +2,10 @@ import os
 import logging
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters
 )
-from flask import Flask
+from flask import Flask, request
 from threading import Thread
 from dotenv import load_dotenv
 from duckduckgo_search import DDGS
@@ -14,14 +15,20 @@ from io import BytesIO
 from PIL import Image
 import pytesseract
 
-# Загрузка .env
+# Загрузка переменных
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "123456789"))
 KASPI_NAME = os.getenv("KASPI_NAME", "Имя Kaspi")
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")  # Добавь это в .env
+WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL")
 
-# Память доступа
+# Telegram Webhook путь
+WEBHOOK_PATH = f"/{TOKEN}"
+
+# Flask-приложение для Render
+flask_app = Flask(__name__)
+
+# Доступ пользователей
 user_access = {}
 free_trial_used = set()
 saved_places = {}
@@ -30,16 +37,7 @@ saved_places = {}
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Flask для Render
-flask_app = Flask(__name__)
-@flask_app.route("/")
-def home():
-    return "KazPartyBot is alive!"
-
-def run_flask():
-    flask_app.run(host="0.0.0.0", port=8080)
-
-# Команды
+# Обработчик /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     saved_places.setdefault(user_id, [])
@@ -63,7 +61,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "После оплаты пришлите чек сюда."
         )
 
-# Обработка чеков по фото (Kaspi)
+# Обработка чека
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     photo = update.message.photo[-1]
@@ -78,7 +76,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Не удалось распознать имя на чеке. Попробуйте снова.")
 
-# Голосовой ввод
+# Голос
 async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not user_access.get(user_id) and user_id != OWNER_ID:
@@ -102,7 +100,7 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except sr.UnknownValueError:
             await update.message.reply_text("❌ Не удалось распознать голос.")
 
-# Кнопка сохранённых мест
+# Сохранённые места
 async def my_places(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     places = saved_places.get(user_id, [])
@@ -113,7 +111,7 @@ async def my_places(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n\n".join(places)
     await update.message.reply_text(f"📚 Ваши сохранённые места:\n\n{msg}")
 
-# Поиск заведений через DuckDuckGo
+# Поиск
 async def search_places(update: Update, query: str):
     user_id = update.effective_user.id
     await update.message.reply_text("🔍 Ищу подходящие места...")
@@ -132,7 +130,7 @@ async def search_places(update: Update, query: str):
     else:
         await update.message.reply_text("😕 Ничего не найдено.")
 
-# Обработка текстов
+# Текст
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
@@ -147,23 +145,36 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await search_places(update, text)
 
+# Flask маршрут
+@flask_app.route(WEBHOOK_PATH, methods=["POST"])
+def webhook():
+    from telegram import Update
+    update = Update.de_json(request.get_json(force=True), bot_app.bot)
+    bot_app.update_queue.put(update)
+    return "ok", 200
+
+@flask_app.route("/")
+def home():
+    return "KazPartyBot is alive!"
+
 # Запуск
 def main():
-    Thread(target=run_flask).start()
-    app = ApplicationBuilder().token(TOKEN).build()
+    global bot_app
+    bot_app = ApplicationBuilder().token(TOKEN).concurrent_updates(True).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    app.add_handler(MessageHandler(filters.VOICE, voice_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    bot_app.add_handler(MessageHandler(filters.VOICE, voice_handler))
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # Webhook-режим
-    webhook_url = f"{RENDER_EXTERNAL_URL}/{TOKEN}"
-    app.run_webhook(
+    # Webhook
+    bot_app.run_webhook(
         listen="0.0.0.0",
         port=8080,
-        webhook_url=webhook_url,
+        webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
     )
 
+# Запуск Flask в потоке
 if __name__ == "__main__":
+    Thread(target=flask_app.run, kwargs={"host": "0.0.0.0", "port": 8080}).start()
     main()
