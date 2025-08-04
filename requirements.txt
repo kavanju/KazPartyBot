@@ -3,7 +3,6 @@ aiohttp
 requests
 Pillow
 duckduckgo-search
-Flask
 SpeechRecognition
 pydub
 python-dotenv
