@@ -1,16 +1,18 @@
 FROM python:3.10-slim
 
-# Установим зависимости
+# Установка зависимостей
 RUN apt-get update && apt-get install -y \
-    libsm6 libxext6 libxrender-dev \
     tesseract-ocr \
+    libsndfile1 \
     ffmpeg \
-    && apt-get clean
+    && rm -rf /var/lib/apt/lists/*
 
+# Копирование кода
 WORKDIR /app
 COPY . /app
 
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+# Установка Python-зависимостей
+RUN pip install --no-cache-dir -r requirements.txt
 
+# Запуск бота
 CMD ["python", "bot.py"]
