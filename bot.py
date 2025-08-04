@@ -129,18 +129,10 @@ application.add_handler(MessageHandler(filters.VOICE, voice_handler))
 
 import asyncio
 
-async def run_bot():
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    app.add_handler(MessageHandler(filters.VOICE, voice_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    await app.updater.wait()
+    def run_flask():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    flask_app.run(host="0.0.0.0", port=8080)
 
 def main():
     # Запуск Flask в отдельном потоке
@@ -151,4 +143,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
