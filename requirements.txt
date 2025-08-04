@@ -6,3 +6,4 @@ Pillow
 pydub
 SpeechRecognition
 duckduckgo-search
+requests
