@@ -8,3 +8,5 @@ SpeechRecognition
 pydub
 python-dotenv
 pytesseract
+tesseract-ocr
+build.sh
