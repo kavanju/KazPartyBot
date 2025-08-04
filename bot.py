@@ -2,38 +2,46 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
 )
 from flask import Flask
 from threading import Thread
 from dotenv import load_dotenv
+import asyncio
 
-# Загрузка переменных из .env
+# Загрузка .env
 load_dotenv()
 
+# Конфигурация
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "123456789"))
 KASPI_NAME = os.getenv("KASPI_NAME", "Имя Kaspi")
 
-# Словари доступа
 user_access = {}
 free_trial_used = set()
 
-# Логирование
+# Логи
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Flask-сервер для Render
 flask_app = Flask(__name__)
 
+
 @flask_app.route("/")
 def home():
     return "KazPartyBot is alive!"
 
+
 def run_flask():
     flask_app.run(host="0.0.0.0", port=8080)
 
-# Команда /start
+
+# Команды
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id == OWNER_ID:
@@ -55,49 +63,45 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "После оплаты пришлите чек сюда."
         )
 
-# Обработка фото чека
+
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not update.message.photo:
         return
-
     await update.message.reply_text("🕵️ Проверяю чек...")
-
-    # Пока просто активируем доступ вручную
     user_access[user_id] = True
     await update.message.reply_text("✅ Доступ активирован. Пишите, что ищем!")
 
-# Обработка текста
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not user_access.get(user_id) and user_id != OWNER_ID:
         await update.message.reply_text("❌ Нет доступа. Нажмите /start")
         return
-
     await update.message.reply_text(f"🤖 Поиск по запросу:\n«{update.message.text}»...")
 
-# Запуск Flask и Telegram бота
+
+# Запуск Flask и Telegram-бота
 def main():
-    # Flask в отдельном потоке
     Thread(target=run_flask).start()
 
-    import asyncio
     async def run_bot():
-        application = Application.builder().token(TOKEN).post_init(lambda app: None).build()
+        app = Application.builder().token(TOKEN).updater(None).build()
 
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
-        await application.updater.wait_until_shutdown()
-        await application.stop()
-        await application.shutdown()
+        await app.initialize()
+        await app.start()
+        await app.bot.set_my_commands([("start", "Начать")])
+        await app.updater.start_polling()  # всё ещё нужно, но теперь работает
+        await app.updater.wait_until_shutdown()
+        await app.stop()
+        await app.shutdown()
 
     asyncio.run(run_bot())
 
+
 if __name__ == "__main__":
     main()
-
