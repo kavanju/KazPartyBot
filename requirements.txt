@@ -1,9 +1,9 @@
-python-telegram-bot==20.5
+python-telegram-bot==20.7
 aiohttp
 requests
 Pillow
 duckduckgo-search
-Flask==2.3.3
+Flask
 SpeechRecognition
 pydub
-python-dotenv==1.0.1
+python-dotenv
