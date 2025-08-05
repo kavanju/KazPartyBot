@@ -3,4 +3,9 @@ services:
     name: kazpartybot
     env: docker
     plan: free
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: Dockerfile
+    envVars:
+      - key: TOKEN
+        value: 8344897948:AAHIGF6DJGeL__PeFU8LMLqeTk4NfXhJCXk
+      - key: KASPI_NAME
+        value: Абдильманов Темирлан Серыкович 
