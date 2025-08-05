@@ -1,140 +1,79 @@
-import os
-import logging
-import asyncio
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
+import os import logging import asyncio from telegram import Update, InputFile, KeyboardButton, ReplyKeyboardMarkup from telegram.ext import ( ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters ) from dotenv import load_dotenv from duckduckgo_search import DDGS from PIL import Image import requests import io import speech_recognition as sr from pydub import AudioSegment from flask import Flask from threading import Thread
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    InputFile,
-)
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
-
-import speech_recognition as sr
-from pydub import AudioSegment
-from duckduckgo_search import DDGS
-import aiohttp
-
-# === Загрузка конфигурации ===
 load_dotenv()
-TOKEN = os.getenv("TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID", "123456789"))
 
-# === Логирование ===
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+TOKEN = os.getenv("TOKEN") OWNER_ID = int(os.getenv("OWNER_ID")) KASPI_NAME = os.getenv("KASPI_NAME") FREE_ATTEMPT_USERS = set() PAID_USERS = {}
 
-# === Хранилище доступа ===
-user_access = {}
+logging.basicConfig(level=logging.INFO)
 
-# === Проверка доступа ===
-def has_access(user_id: int) -> bool:
-    if user_id in user_access:
-        return datetime.now() < user_access[user_id]
-    return False
+Flask app for Render keep-alive
 
-# === Команда /start ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Привет! Я помогу найти лучшие места для отдыха, еды и веселья в твоём городе.\n\n"
-        "🔓 Чтобы начать, введи /pay и получи доступ на 48 часов."
-    )
+app = Flask('')
 
-# === Оплата /pay ===
-async def pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    keyboard = [[InlineKeyboardButton("💳 Оплатить 400₸ через Kaspi", url="https://pay.kaspi.kz/pay/sav8emzy")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+@app.route('/') def home(): return "KazPartyBot is alive!"
 
-    await update.message.reply_text(
-        "🔒 Чтобы получить доступ к боту на 48 часов, оплатите 400₸ по кнопке ниже.\n\n"
-        "❗ После оплаты, пожалуйста, напишите 'Оплатил', чтобы мы могли быстрее активировать доступ.\n"
-        "⏳ Или просто подождите — доступ будет выдан через 1 минуту автоматически.",
-        reply_markup=reply_markup
-    )
+def run(): app.run(host='0.0.0.0', port=8080)
 
-    await asyncio.sleep(60)
-    if not has_access(user_id):
-        user_access[user_id] = datetime.now() + timedelta(hours=48)
-        await context.bot.send_message(chat_id=user_id, text="✅ Спасибо! Доступ активирован на 48 часов 🎉")
+def keep_alive(): Thread(target=run).start()
 
-# === Голосовые сообщения ===
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not has_access(user_id):
-        await update.message.reply_text("🚫 Доступ ограничен. Введите /pay для активации.")
-        return
+====== ПОИСК ЗАВЕДЕНИЙ ЧЕРЕЗ ИИ (DuckDuckGo) ======
 
-    voice = await update.message.voice.get_file()
-    ogg_path = f"voice_{user_id}.ogg"
-    wav_path = f"voice_{user_id}.wav"
-    await voice.download_to_drive(ogg_path)
+def search_places(query): results = [] with DDGS() as ddgs: for r in ddgs.text(query + " site:2gis.kz", max_results=3): results.append({"title": r['title'], "href": r['href'], "body": r['body']}) return results
 
-    sound = AudioSegment.from_ogg(ogg_path)
-    sound.export(wav_path, format="wav")
+====== РАСПОЗНАВАНИЕ ГОЛОСА ======
 
-    recognizer = sr.Recognizer()
-    with sr.AudioFile(wav_path) as source:
-        audio = recognizer.record(source)
+async def recognize_voice(file_path): recognizer = sr.Recognizer() sound = AudioSegment.from_file(file_path) wav_path = file_path.replace(".ogg", ".wav") sound.export(wav_path, format="wav")
+
+with sr.AudioFile(wav_path) as source:
+    audio = recognizer.record(source)
     try:
         text = recognizer.recognize_google(audio, language="ru-RU")
-        await update.message.reply_text(f"🗣️ Вы сказали: {text}")
-        await search_places(text, update, context)
-    except Exception as e:
-        await update.message.reply_text("❌ Не удалось распознать речь. Попробуйте снова.")
+        return text
+    except sr.UnknownValueError:
+        return "Не удалось распознать речь."
 
-    os.remove(ogg_path)
-    os.remove(wav_path)
+====== ОБРАБОТКА КОМАНД ======
 
-# === Поиск заведений через DuckDuckGo ===
-async def search_places(query: str, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not has_access(user_id):
-        await update.message.reply_text("🚫 У вас нет доступа. Введите /pay.")
-        return
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE): await update.message.reply_text( "👋 Привет! Я ИИ-помощник по заведениям Казахстана. Напиши, куда хочешь пойти — я подберу лучшие варианты.\n\n" "🗣 Можешь использовать голосовой ввод или текст.\n" "💵 Для неограниченного доступа — оплати 400₸: https://pay.kaspi.kz/pay/sav8emzy\n" "После оплаты доступ активируется в течение 1 минуты.\n" )
 
-    await update.message.reply_text("🔍 Ищу подходящие места...")
-    results = []
-    async with aiohttp.ClientSession() as session:
-        async with DDGS(session=session) as ddgs:
-            async for r in ddgs.text(query + " заведения Казахстан", region="kz-ru", safesearch="off", max_results=3):
-                results.append(r)
+====== ПРОВЕРКА ДОСТУПА ======
 
-    if results:
-        for res in results:
-            msg = f"🏙️ {res['title']}\n{res['href']}\n\n{res.get('body', '')}"
-            await update.message.reply_text(msg)
-    else:
-        await update.message.reply_text("😔 Не удалось найти подходящие заведения.")
+def user_has_access(user_id): return user_id in PAID_USERS or user_id in FREE_ATTEMPT_USERS
 
-# === Обработка текста ===
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_id = update.effective_user.id
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE): user_id = update.effective_user.id text = update.message.text
 
-    if text.lower() in ["оплатил", "я оплатил", "готово"]:
-        user_access[user_id] = datetime.now() + timedelta(hours=48)
-        await update.message.reply_text("✅ Спасибо! Доступ активирован на 48 часов.")
-    else:
-        await search_places(text, update, context)
+if not user_has_access(user_id):
+    FREE_ATTEMPT_USERS.add(user_id)
+    await update.message.reply_text("🔄 Проверка оплаты... Пожалуйста, подождите минуту.")
+    await asyncio.sleep(60)
+    PAID_USERS[user_id] = True
+    await update.message.reply_text("✅ Доступ выдан! Теперь вы можете пользоваться ботом без ограничений на 48 часов.")
 
-# === Основной запуск ===
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
+results = search_places(text)
+if not results:
+    await update.message.reply_text("❌ Ничего не найдено. Попробуйте описать запрос иначе.")
+    return
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("pay", pay))
-    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+for place in results:
+    msg = f"🏙 <b>{place['title']}</b>\n{place['body']}\n🔗 <a href='{place['href']}'>Ссылка</a>"
+    await update.message.reply_html(msg)
 
-    print("🤖 Бот запущен")
-    app.run_polling()
+====== ОБРАБОТКА ГОЛОСА ======
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE): user = update.effective_user voice = await update.message.voice.get_file() file_path = f"voice_{user.id}.ogg" await voice.download_to_drive(file_path)
+
+text = await recognize_voice(file_path)
+update.message.text = text
+await handle_message(update, context)
+
+====== ОСНОВНОЙ ЗАПУСК ======
+
+if name == 'main': keep_alive() app = ApplicationBuilder().token(TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+
+print("Bot is running...")
+app.run_polling()
+
