@@ -1,4 +1,4 @@
-FROM python:3.10.13-slim
+FROM python:3.13-slim
 
 # Установим системные зависимости
 RUN apt-get update && apt-get install -y \
@@ -7,13 +7,13 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && apt-get clean
 
-# Установка рабочего каталога
+# Устанавливаем рабочую директорию
 WORKDIR /app
 COPY . /app
 
-# Установка зависимостей
+# Устанавливаем зависимости
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# Старт
+# Запуск
 CMD ["python", "bot.py"]
