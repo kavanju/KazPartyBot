@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.10.13-slim
 
 # Установим системные зависимости
 RUN apt-get update && apt-get install -y \
@@ -7,18 +7,13 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && apt-get clean
 
-# Установка рабочей директории
+# Установка рабочего каталога
 WORKDIR /app
-
-# Копируем все файлы проекта
 COPY . /app
 
 # Установка зависимостей
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# Устанавливаем переменные среды (если нужно)
-ENV PYTHONUNBUFFERED=1
-
-# Запуск бота
+# Старт
 CMD ["python", "bot.py"]
