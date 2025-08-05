@@ -1,130 +1,60 @@
-import os
-import logging
-import sqlite3
-import requests
-import asyncio
-import pytesseract
-import speech_recognition as sr
-from PIL import Image
-from flask import Flask
-from threading import Thread
-from telegram import (Update, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, InputFile)
-from telegram.ext import (ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler)
-from duckduckgo_search import DDGS
-from dotenv import load_dotenv
+import os import logging from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler from duckduckgo_search import DDGS from PIL import Image import pytesseract from io import BytesIO import speech_recognition as sr from pydub import AudioSegment import requests from dotenv import load_dotenv
 
-# Load env vars
 load_dotenv()
-TOKEN = os.getenv("TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID", "123456789"))
-KASPI_NAME = os.getenv("KASPI_NAME", "")
-PAYPAL_LINK = os.getenv("PAYPAL_LINK", "")
 
-# Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+TOKEN = os.getenv("TOKEN") OWNER_ID = int(os.getenv("OWNER_ID")) KASPI_NAME = os.getenv("KASPI_NAME")
 
-# Flask для рендера
-flask_app = Flask(__name__)
-@flask_app.route('/')
-def home():
-    return 'Bot is running!'
+logging.basicConfig( format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO )
 
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=8080)
+Поиск заведений через DuckDuckGo
 
-# DB init
-conn = sqlite3.connect("data.db", check_same_thread=False)
-c = conn.cursor()
-c.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, access_until INTEGER)''')
-c.execute('''CREATE TABLE IF NOT EXISTS places (user_id INTEGER, name TEXT, address TEXT, photo_url TEXT)''')
-conn.commit()
+async def search_places(query: str) -> str: results = [] with DDGS() as ddgs: for r in ddgs.text(query, region='kz-ru', safesearch='Off', max_results=5): results.append(f"🔹 <b>{r['title']}</b>\n{r['href']}\n{r['body']}") return "\n\n".join(results) if results else "😕 Ничего не найдено. Попробуйте изменить запрос."
 
-# Проверка доступа
-def has_access(user_id):
-    c.execute("SELECT access_until FROM users WHERE id=?", (user_id,))
-    row = c.fetchone()
-    if row:
-        return row[0] > int(asyncio.time.time())
-    return False
+Обработка команды /start
 
-# Команда /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [[KeyboardButton("🎤 Голосом"), KeyboardButton("📸 Отправить чек")],
-          [KeyboardButton("📚 Мои сохранённые места")]]
-    await update.message.reply_text("Привет! Я помогу найти заведение. Опиши, куда хочешь пойти:",
-                                    reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE): await update.message.reply_text("👋 Привет! Отправь голосом или текстом, куда хочешь сходить — я подберу заведения! Также можешь отправить фото Kaspi-чека для активации доступа.")
 
-# Обработка текста запроса
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if not has_access(user_id):
-        await update.message.reply_text("🔒 У вас нет доступа. 1 бесплатный запрос. Потом оплата 400₸/48ч. Отправьте чек Kaspi или оплатите: https://pay.kaspi.kz/pay/sav8emzy")
-    query = update.message.text
-    places = []
-    with DDGS() as ddgs:
-        for r in ddgs.text(query + " site:2gis.kz", max_results=3):
-            places.append(r)
-    for place in places:
-        name = place['title']
-        link = place['href']
-        snippet = place['body']
-        await update.message.reply_text(f"🏙️ {name}\n📍 {snippet}\n🔗 {link}")
-        c.execute("INSERT INTO places (user_id, name, address, photo_url) VALUES (?, ?, ?, ?)",
-                  (user_id, name, snippet, link))
-    conn.commit()
+Обработка текстового сообщения
 
-# Обработка чеков (фото)
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    photo = await update.message.photo[-1].get_file()
-    path = f"/tmp/{update.message.from_user.id}.jpg"
-    await photo.download_to_drive(path)
-    text = pytesseract.image_to_string(Image.open(path))
-    if KASPI_NAME in text and ("400" in text or "200" in text):
-        c.execute("REPLACE INTO users (id, access_until) VALUES (?, ?)", (update.message.from_user.id, int(asyncio.time.time()) + 172800))
-        conn.commit()
-        await update.message.reply_text("✅ Доступ активирован на 48 часов")
-    else:
-        await update.message.reply_text("❌ Не удалось подтвердить оплату. Проверьте, чтобы на чеке было имя и сумма")
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE): query = update.message.text await update.message.reply_text("🔍 Ищу заведения...") results = await search_places(query) await update.message.reply_text(results, parse_mode="HTML")
 
-# Обработка голосовых сообщений
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    voice = await update.message.voice.get_file()
-    path = f"/tmp/{update.message.from_user.id}.ogg"
-    await voice.download_to_drive(path)
+Обработка голосового ввода
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE): file = await update.message.voice.get_file() ogg_path = "voice.ogg" wav_path = "voice.wav" await file.download_to_drive(ogg_path)
+
+# Конвертация ogg в wav
+sound = AudioSegment.from_ogg(ogg_path)
+sound.export(wav_path, format="wav")
+
+recognizer = sr.Recognizer()
+with sr.AudioFile(wav_path) as source:
+    audio = recognizer.record(source)
     try:
-        from pydub import AudioSegment
-        AudioSegment.from_ogg(path).export(path.replace(".ogg", ".wav"), format="wav")
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(path.replace(".ogg", ".wav")) as source:
-            audio = recognizer.record(source)
-            text = recognizer.recognize_google(audio, language="ru-RU")
-            update.message.text = text
-            await handle_text(update, context)
-    except Exception as e:
-        await update.message.reply_text("❌ Ошибка распознавания речи")
+        text = recognizer.recognize_google(audio, language="ru-RU")
+        await update.message.reply_text(f"🗣️ Вы сказали: {text}\n🔍 Ищу...")
+        results = await search_places(text)
+        await update.message.reply_text(results, parse_mode="HTML")
+    except sr.UnknownValueError:
+        await update.message.reply_text("❌ Не удалось распознать речь.")
 
-# Мои сохранённые места
-async def saved_places(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    c.execute("SELECT name, address, photo_url FROM places WHERE user_id=?", (user_id,))
-    rows = c.fetchall()
-    if not rows:
-        await update.message.reply_text("У вас пока нет сохранённых мест.")
-    for name, addr, url in rows:
-        await update.message.reply_text(f"🏙️ {name}\n📍 {addr}\n🔗 {url}")
+Обработка фото Kaspi чека
 
-# Основной запуск
-if __name__ == '__main__':
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    application = ApplicationBuilder().token(TOKEN).build()
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE): file = await update.message.photo[-1].get_file() img_bytes = await file.download_as_bytearray() image = Image.open(BytesIO(img_bytes)) text = pytesseract.image_to_string(image, lang='rus')
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_handler(MessageHandler(filters.VOICE, handle_voice))
-    application.add_handler(MessageHandler(filters.Regex("📚 Мои сохранённые места"), saved_places))
+if KASPI_NAME.lower() in text.lower() and ("400" in text or "₸" in text):
+    await update.message.reply_text("✅ Оплата подтверждена. Доступ активирован на 48 часов.")
+else:
+    await update.message.reply_text("❌ Не удалось подтвердить чек. Убедитесь, что видно имя и сумму 400₸.")
 
-    Thread(target=run_flask).start()
-    application.run_polling()
+Основной запуск
+
+if name == 'main': app = ApplicationBuilder().token(TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+print("KazPartyBot запущен...")
+app.run_polling()
+
