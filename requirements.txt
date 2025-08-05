@@ -1,8 +1,3 @@
 python-telegram-bot==20.7
-duckduckgo-search
-python-dotenv
-SpeechRecognition
-pydub
-requests
-Pillow
-Flask
+Flask==3.0.2
+python-dotenv==1.0.1
