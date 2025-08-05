@@ -1,4 +1,5 @@
 python-telegram-bot==20.7
+python-dotenv
 SpeechRecognition
 pydub
 Flask
@@ -6,4 +7,4 @@ aiohttp
 requests
 Pillow
 duckduckgo-search
-python-dotenv
+pytesseract
