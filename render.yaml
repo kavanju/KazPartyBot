@@ -1,11 +1,14 @@
 services:
   - type: web
     name: kazpartybot
-    env: python
+    env: docker
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
-    runtime: python
-    build:
-      pythonVersion: 3.11.9
-    autoDeploy: true
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: TOKEN
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: KASPI_NAME
+        sync: false
