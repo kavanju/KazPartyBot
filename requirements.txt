@@ -1,10 +1,9 @@
 python-telegram-bot==20.7
-python-dotenv
-SpeechRecognition
-pydub
-Flask
-aiohttp
+aiohttp>=3.9.5
 requests
 Pillow
 duckduckgo-search
-pytesseract
+Flask
+SpeechRecognition
+pydub
+python-dotenv
