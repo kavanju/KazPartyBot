@@ -1,89 +1,85 @@
 import os
 import logging
-import tempfile
+import asyncio
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from duckduckgo_search import DDGS
+from dotenv import load_dotenv
 import pytesseract
 from PIL import Image
-from pydub import AudioSegment
 import speech_recognition as sr
-from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes,
-    filters, CallbackQueryHandler
-)
+from pydub import AudioSegment
 
-# Загрузка .env
+# Load .env
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
-KASPI_NAME = os.getenv("KASPI_NAME")
+KASPI_NAME = os.getenv("KASPI_NAME", "")
 OWNER_ID = int(os.getenv("OWNER_ID", "123456789"))
 
-# Логирование
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Старт
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("Описать, куда хочу", callback_data='text')],
-                [InlineKeyboardButton("Голосом сказать", callback_data='voice')],
-                [InlineKeyboardButton("Оплатил - чек фото", callback_data='check')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Что хочешь сделать?", reply_markup=reply_markup)
+# Доступ (1 бесплатный запрос)
+user_access = {}
 
-# Обработчик кнопок
-async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == 'text':
-        await query.message.reply_text("Отправь описание места")
-    elif query.data == 'voice':
-        await query.message.reply_text("Говори! Отправь голосовое сообщение")
-    elif query.data == 'check':
-        await query.message.reply_text("Загрузи фото чека Kaspi")
+def has_access(user_id):
+    if user_id in user_access:
+        return user_access[user_id] > asyncio.get_event_loop().time()
+    return False
+
+# Команда /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = [[KeyboardButton("🎤 Голосом"), KeyboardButton("📸 Отправить чек")]]
+    await update.message.reply_text("Привет! Я помогу найти заведение. Опиши, куда хочешь пойти:",
+                                    reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
 # Обработка текста
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    await update.message.reply_text(f"Ищу место по описанию: {text}\nСкоро всё найду...")
-    # Тут можешь добавить поиск заведений через API
+    user_id = update.message.from_user.id
+    if not has_access(user_id):
+        await update.message.reply_text("🔒 У вас нет доступа. 1 бесплатный запрос. Потом отправьте Kaspi чек.")
+        user_access[user_id] = asyncio.get_event_loop().time() + 60  # 1 минута доступа
+    query = update.message.text
+    with DDGS() as ddgs:
+        results = list(ddgs.text(query + " site:2gis.kz", max_results=3))
+    for r in results:
+        await update.message.reply_text(f"🏙️ {r['title']}\n📍 {r['body']}\n🔗 {r['href']}")
 
-# Обработка голосового
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    file = await update.message.voice.get_file()
-    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as ogg:
-        await file.download_to_drive(ogg.name)
-        audio = AudioSegment.from_file(ogg.name)
-        wav_path = ogg.name.replace(".ogg", ".wav")
-        audio.export(wav_path, format="wav")
-
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(wav_path) as source:
-            audio_data = recognizer.record(source)
-            try:
-                text = recognizer.recognize_google(audio_data, language="ru-RU")
-                await update.message.reply_text(f"Распознанно: {text}")
-                await handle_text(update, context)
-            except sr.UnknownValueError:
-                await update.message.reply_text("Не понял, повтори")
-
-# Обработка чеков
+# Фото чека
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    file = await update.message.photo[-1].get_file()
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tf:
-        await file.download_to_drive(tf.name)
-        image = Image.open(tf.name)
-        text = pytesseract.image_to_string(image, lang='rus')
-        if KASPI_NAME.lower() in text.lower():
-            await update.message.reply_text("Чек подтверждён. Доступ активирован на 48 часов!")
-        else:
-            await update.message.reply_text("Имя в чеке не совпадает. Проверьте, что чек каспи содержит имя: {KASPI_NAME}")
+    photo = await update.message.photo[-1].get_file()
+    path = f"/tmp/{update.message.from_user.id}.jpg"
+    await photo.download_to_drive(path)
+    text = pytesseract.image_to_string(Image.open(path))
+    if KASPI_NAME in text and ("400" in text or "200" in text):
+        user_access[update.message.from_user.id] = asyncio.get_event_loop().time() + 172800
+        await update.message.reply_text("✅ Доступ активирован на 48 часов")
+    else:
+        await update.message.reply_text("❌ Не удалось подтвердить оплату")
 
-# Запуск
+# Голос
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    voice = await update.message.voice.get_file()
+    path = f"/tmp/{update.message.from_user.id}.ogg"
+    await voice.download_to_drive(path)
+    try:
+        wav_path = path.replace(".ogg", ".wav")
+        AudioSegment.from_ogg(path).export(wav_path, format="wav")
+        r = sr.Recognizer()
+        with sr.AudioFile(wav_path) as source:
+            audio = r.record(source)
+            text = r.recognize_google(audio, language="ru-RU")
+            update.message.text = text
+            await handle_text(update, context)
+    except Exception as e:
+        await update.message.reply_text("❌ Ошибка распознавания речи")
+
+# Основной запуск
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(CallbackQueryHandler(handle_button))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.run_polling()
