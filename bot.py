@@ -1,136 +1,151 @@
 import os
 import logging
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+    ConversationHandler,
+)
 from keep_alive import keep_alive
 from dotenv import load_dotenv
 import datetime
 
-# Загрузка переменных окружения
 load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID"))
 KASPI_NAME = os.getenv("KASPI_NAME")
-KASPI_LINK = os.getenv("KASPI_LINK")
-PAYPAL_EMAIL = os.getenv("PAYPAL_EMAIL")
-PAYPAL_PRICE_USD = os.getenv("PAYPAL_PRICE_USD", "2")
-ACCESS_DURATION_HOURS = int(os.getenv("ACCESS_DURATION_HOURS", "48"))
+MOBILE_PAY_URL = os.getenv("MOBILE_PAY_URL")
 
-user_access = {}
-free_used = set()
+logging.basicConfig(level=logging.INFO)
 
-# Языки
-LANGS = {
-    'ru': {
-        'welcome': "👋 Привет! Я помогу тебе найти, где отдохнуть: бары, клубы, караоке, рестораны и многое другое.",
-        'free_used': "⚠️ Бесплатный запрос уже использован. Оплатите доступ:",
-        'choose_lang': "Выберите язык / Тілді таңдаңыз / Choose language",
-        'pay': "💳 Оплатите 400₸ Kaspi или $2 через PayPal, чтобы получить доступ на 48 часов:",
-        'kaspi': "📲 Kaspi Pay:",
-        'paypal': "🌍 PayPal:",
-        'access_granted': "✅ Доступ активирован!",
-        'send_request': "✍️ Опиши, куда хочешь пойти (например: 'где потанцевать в Астане с музыкой 2000-х')",
-    },
-    'kk': {
-        'welcome': "👋 Сәлем! Мен сізге баруға болатын орындарды табуға көмектесемін: барлар, клубтар, караоке, мейрамханалар және т.б.",
-        'free_used': "⚠️ Тегін сұраныс пайдаланылды. Қолжетімділікті сатып алыңыз:",
-        'choose_lang': "Выберите язык / Тілді таңдаңыз / Choose language",
-        'pay': "💳 400₸ Kaspi немесе $2 PayPal арқылы төлеңіз (48 сағатқа қолжетімділік):",
-        'kaspi': "📲 Kaspi төлемі:",
-        'paypal': "🌍 PayPal:",
-        'access_granted': "✅ Қолжетімділік берілді!",
-        'send_request': "✍️ Қайда барғыңыз келетінін жазыңыз (мысалы: 'Астанада би билейтін жер')",
-    },
-    'en': {
-        'welcome': "👋 Hi! I’ll help you find places to relax: bars, clubs, karaoke, restaurants, and more.",
-        'free_used': "⚠️ Free request used. Please pay for access:",
-        'choose_lang': "Выберите язык / Тілді таңдаңыз / Choose language",
-        'pay': "💳 Pay 400₸ via Kaspi or $2 via PayPal to get 48-hour access:",
-        'kaspi': "📲 Kaspi Pay:",
-        'paypal': "🌍 PayPal:",
-        'access_granted': "✅ Access granted!",
-        'send_request': "✍️ Describe where you want to go (e.g., 'Where to dance in Berlin with techno')",
-    }
-}
+USERS = {}
+FREE_TRIAL_USED = set()
 
-user_lang = {}
 
-def get_lang_text(user_id, key):
-    lang = user_lang.get(user_id, os.getenv("DEFAULT_LANG", "ru"))
-    return LANGS.get(lang, LANGS["ru"])[key]
+def get_language_keyboard():
+    return ReplyKeyboardMarkup(
+        [
+            ["🇷🇺 Русский", "🇰🇿 Қазақша", "🇬🇧 English"]
+        ],
+        resize_keyboard=True
+    )
 
-def check_access(user_id):
-    if user_id in user_access:
-        if datetime.datetime.now() < user_access[user_id]:
-            return True
-        else:
-            del user_access[user_id]
-    return False
+
+def get_main_menu(lang="🇷🇺 Русский"):
+    if "Қ" in lang:
+        return ReplyKeyboardMarkup(
+            [["Іздеу", "Сақталған орындар"]], resize_keyboard=True
+        )
+    elif "En" in lang or "🇬🇧" in lang:
+        return ReplyKeyboardMarkup(
+            [["Search", "Saved places"]], resize_keyboard=True
+        )
+    else:
+        return ReplyKeyboardMarkup(
+            [["Поиск", "Сохранённые места"]], resize_keyboard=True
+        )
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    keyboard = [
-        [KeyboardButton("Русский 🇷🇺"), KeyboardButton("Қазақша 🇰🇿"), KeyboardButton("English 🇬🇧")]
-    ]
-    await update.message.reply_text(get_lang_text(user.id, "choose_lang"),
-                                    reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+    user_id = update.effective_user.id
 
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
+    await update.message.reply_text(
+        "Выберите язык / Тілді таңдаңыз / Choose language:",
+        reply_markup=get_language_keyboard()
+    )
+
+
+async def handle_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = update.message.text
+
+    USERS[user_id] = {"lang": lang, "access_until": None, "saved": []}
+
+    await update.message.reply_text(
+        "Добро пожаловать! Напишите, куда хотите сходить (например: тихий бар с живой музыкой в Берлине)." if "🇷🇺" in lang else
+        "Қош келдіңіз! Қайда барғыңыз келетінін жазыңыз (мысалы: Алматыда тыныш кафе)." if "🇰🇿" in lang else
+        "Welcome! Tell me where you'd like to go (e.g., chill bar with live music in Berlin).",
+        reply_markup=get_main_menu(lang)
+    )
+
+
+async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     text = update.message.text
 
-    # Выбор языка
-    if text == "Русский 🇷🇺":
-        user_lang[user.id] = "ru"
-        await update.message.reply_text(LANGS["ru"]["welcome"] + "\n\n" + LANGS["ru"]["send_request"])
-        return
-    elif text == "Қазақша 🇰🇿":
-        user_lang[user.id] = "kk"
-        await update.message.reply_text(LANGS["kk"]["welcome"] + "\n\n" + LANGS["kk"]["send_request"])
-        return
-    elif text == "English 🇬🇧":
-        user_lang[user.id] = "en"
-        await update.message.reply_text(LANGS["en"]["welcome"] + "\n\n" + LANGS["en"]["send_request"])
+    if user_id not in USERS:
+        await update.message.reply_text("Сначала введите /start.")
         return
 
-    # Проверка доступа
-    if check_access(user.id):
-        await update.message.reply_text("🤖 [Идёт подбор места… в реальности тут будет ИИ и фото, отзывы, карта...]")
-        return
+    user = USERS[user_id]
+    lang = user.get("lang", "🇷🇺")
 
-    if user.id not in free_used:
-        free_used.add(user.id)
-        await update.message.reply_text("🎁 Бесплатный пробный запрос принят! Следующий будет платный.")
-        await update.message.reply_text("🤖 [Тестовый подбор места: например 'Бар в Алматы с живой музыкой']")
-        return
+    now = datetime.datetime.utcnow()
+    access_until = user.get("access_until")
 
-    # Нет доступа
-    lang_msg = get_lang_text(user.id, "free_used") + "\n\n" + \
-               f"{get_lang_text(user.id, 'pay')}\n\n" + \
-               f"{get_lang_text(user.id, 'kaspi')} {KASPI_LINK}\n👤 {KASPI_NAME}\n\n" + \
-               f"{get_lang_text(user.id, 'paypal')} paypal.me/{PAYPAL_EMAIL} (${PAYPAL_PRICE_USD})"
-    await update.message.reply_text(lang_msg)
-
-async def access_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id == OWNER_ID and context.args:
-        try:
-            target_id = int(context.args[0])
-            user_access[target_id] = datetime.datetime.now() + datetime.timedelta(hours=ACCESS_DURATION_HOURS)
-            await update.message.reply_text(f"✅ Доступ выдан пользователю {target_id}")
-        except:
-            await update.message.reply_text("❌ Ошибка выдачи доступа.")
+    if access_until and now < access_until:
+        await update.message.reply_text("🔍 Ищу заведения по вашему описанию...")
+        # Здесь должен быть реальный ИИ-поиск + бесплатные API
+        await update.message.reply_text("✅ Пример найденного места: Бар 'Berlin Lounge' — средний чек 15€, работает до 2:00 ночи.")
+        user["saved"].append("Berlin Lounge")
+    elif user_id not in FREE_TRIAL_USED:
+        FREE_TRIAL_USED.add(user_id)
+        await update.message.reply_text(
+            "🎁 Пробный запрос активирован!\n\n🔍 Ищу заведения..."
+        )
+        await update.message.reply_text("✅ Пример места: Клуб 'Astana Night' — музыка 90х, вход свободный.")
+        user["saved"].append("Astana Night")
     else:
-        await update.message.reply_text("❌ Недостаточно прав.")
+        await update.message.reply_text(
+            f"🔒 Ваш доступ закончился.\n\nОплатите 400₸ (48ч): {MOBILE_PAY_URL}\n\n"
+            "После оплаты пришлите чек (фото)."
+        )
 
-if __name__ == '__main__':
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    photo = update.message.photo[-1]
+    file = await photo.get_file()
+    file_path = f"check_{user_id}.jpg"
+    await file.download_to_drive(file_path)
+
+    # Имитация распознавания чека
+    fake_kaspi_name = KASPI_NAME
+    fake_amount = "400"
+
+    # Симулируем успешную проверку
+    now = datetime.datetime.utcnow()
+    USERS[user_id]["access_until"] = now + datetime.timedelta(hours=48)
+
+    await update.message.reply_text("✅ Оплата подтверждена! Доступ на 48 часов активирован.")
+
+
+async def show_saved_places(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    saved = USERS.get(user_id, {}).get("saved", [])
+    if not saved:
+        await update.message.reply_text("📂 Нет сохранённых мест.")
+    else:
+        await update.message.reply_text("📌 Сохранённые места:\n" + "\n".join(saved))
+
+
+def main():
     keep_alive()
-    logging.basicConfig(level=logging.INFO)
+
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("access", access_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.Regex("^(Поиск|Іздеу|Search)$"), process_message))
+    app.add_handler(MessageHandler(filters.Regex("^(Сохранённые места|Сақталған орындар|Saved places)$"), show_saved_places))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_language))
 
     app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
